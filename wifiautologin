@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+
+# /etc/network/if-up.d/wifiautologin
+
+# Version 0.2
+# (c) 2017 by OmegaSquad82
+# Licensed under MIT License
+
+# This script does an automated login into public and private wifi services.
+# Currently it supports the following services with more to come:
+#
+# public:
+#   DB Bahn 'WIFIonICE' at ICE high speed trains
+#
+# private:
+#   Fritz!Box Guest WIFI service
+
+# preamble for temporary files
+PRE=/tmp/wifiautologin
+
+# mimic firefox
+AGENT='Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:57.0) Gecko/20100101 Firefox/57.0'
+SITE='http://detectportal.firefox.com/success.txt'
+MESSAGE='success'
+
+# known redirections to cRaptive portals
+FRITZ='guest'
+ICE='wifionice'
+
+#make initial request, follow redirection and gather login info
+curl -A "$AGENT" -L -e ';auto' -c "${PRE}.cookie" -D "${PRE}-1.header" -o "${PRE}-1.data" "$SITE"
+WHICH=$(grep 'Location:' "$PRE-1.header" | sed '$!d; s/^Location: http/http/g; s/\r.*//g')
+
+# prepare request to login
+if [[ "$WHICH" =~ .*"$FRITZ".* ]]; then
+    URL=$(echo "$WHICH" | sed 's/.*http/http/g; s/untrusted.*/trustme.lua?accept=/g')
+    curl -A "$AGENT" -L -e ';auto' -b "${PRE}.cookie" -D "${PRE}-2.header" -o "${PRE}-2.data" "$URL"
+
+elif [[ "$WHICH" =~ .*"$ICE".* ]]; then
+    #prepare config-file
+    echo "url=$WHICH" > "${PRE}.conf"
+    echo 'data login=true' >> "${PRE}.conf"
+    grep 'CSRFToken' "${PRE}-1.data" | sed 's/.*value=./data CSRFToken=/g; s/\".*//g'  >> "${PRE}.conf"
+    echo 'data connect' >> "${PRE}.conf"
+    curl -A "$AGENT" -L -e ';auto' -b "${PRE}.cookie" -D "${PRE}-2.header" -o "${PRE}-2.data" -K "${PRE}.conf"
+
+else
+    echo 'Nothing to do or service not supported...'
+    rm ${PRE}*
+    exit 0
+fi
+
+if [[ $(curl "$SITE") = "$MESSAGE" ]]; then
+    echo 'login successful, cleaning up...'
+    rm ${PRE}*
+else
+    echo 'something went wrong, no internet connection found...'
+    echo 'please inspect' ${PRE}* 'to find out why'
+fi
